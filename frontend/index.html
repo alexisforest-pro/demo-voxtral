@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VoxBridge · Speak once. Connect everywhere.</title>
+  <link rel="icon" href="/european-emblem.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><img class="european-emblem" src="/european-emblem.svg" width="54" height="36" alt="European flag emblem"><span>VoxBridge<small>LANGUAGE WITHOUT LIMITS</small></span></a>
+    <nav aria-label="Main navigation">
+      <button class="nav-button" data-page="voices"><span class="nav-number">01</span> Capture a voice</button>
+      <button class="nav-button active" data-page="live"><span class="nav-number">02</span> Live Transcript</button>
+      <button class="nav-button" data-page="intelligence"><span class="nav-number">03</span> Record Intelligence</button>
+    </nav>
+    <div class="sidebar-note"><p>Bring everyone into the conversation.</p></div>
+  </aside>
+  <main>
+    <header class="topbar"><span>Workspace <span class="separator">/</span> <strong id="breadcrumb">Live Transcript</strong></span></header>
+    <div id="notice" class="notice" role="alert" hidden></div>
+    <section id="live-page" class="page">
+      <div class="page-heading"><div><div class="eyebrow">REAL-TIME INTERPRETATION</div><h1>Speak once.<br><span>Connect everywhere.</span></h1><p>Your conversation, transcribed and translated into four languages.</p></div><div class="heading-note">4 languages<br><small>One connected conversation</small></div></div>
+      <div class="controls panel">
+        <label>Source language<select id="source-language"><option value="auto">Auto-detect</option><option value="en">English</option><option value="de">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option></select></label>
+        <label>Latency & context<select id="latency"><option value="fast">Responsive · 200 ms audio updates</option><option value="balanced" selected>Balanced · 1 s audio updates</option><option value="accurate">More context · 2 s audio updates</option></select></label>
+        <div class="session-actions"><button id="start-live" class="primary">Start recording</button><button id="clear-transcripts" class="secondary">Clear all transcripts</button></div>
+      </div>
+      <div class="session-strip"><span><span id="recording-dot" class="status-dot neutral"></span> <strong id="session-status">Ready to listen</strong></span><span id="elapsed">00:00</span><span id="queue-status">1 s audio updates + model processing</span><a id="export-current" hidden>Export session JSON</a></div>
+      <article class="panel source-panel"><div class="card-heading"><span class="eyebrow">ORIGINAL TRANSCRIPT</span><span class="model-label">LIVE SPEECH TO TEXT</span></div><canvas id="waveform" width="1000" height="60" aria-label="Microphone input level"></canvas><div id="source-text" class="transcript source-text" tabindex="0" aria-label="Full original transcript" aria-describedby="transcript-hint"><p class="placeholder">Your full transcript will appear here as you speak.</p></div><p id="transcript-hint" class="transcript-hint">Full session history · Scroll up to review earlier phrases without interrupting recording.</p></article>
+      <div class="translation-heading"><h2>Live translations</h2><span>Live speech is optional · Stop recording, then play any translated transcript</span></div>
+      <div id="translations" class="translation-grid"></div>
+      <div class="panel playback-controls"><div><strong>Translated speech volume</strong><small>AI-generated speech · Use headphones to avoid microphone feedback.</small></div><button id="mute" class="secondary" aria-pressed="false">Mute</button><input id="volume" type="range" min="0" max="200" value="100" aria-label="Translated speech volume"><output id="volume-label">100%</output><button id="stop-playback" class="secondary">Clear audio queue</button></div>
+    </section>
+    <section id="voices-page" class="page" hidden>
+      <div class="page-heading"><div><div class="eyebrow">YOUR VOICE, EVERY LANGUAGE</div><h1>A familiar voice.<br><span>A wider world.</span></h1><p>Capture your voice or a consenting speaker and carry it into the conversation.</p></div></div>
+      <div class="voice-layout"><div class="voice-creation"><article class="panel capture-panel"><div class="card-heading"><h2>Create a voice</h2><span class="badge">VOICE CLONING</span></div>
+        <label>Voice name (required)<input id="voice-name" maxlength="80" required aria-describedby="voice-save-status" placeholder="e.g. Alexis · French"></label>
+        <label>Use this voice for<select id="voice-scope"><option value="all">All languages</option><option value="fr">French</option><option value="de">German</option><option value="es">Spanish</option><option value="it">Italian</option><option value="en">English</option></select></label>
+        <div class="recording-script"><span class="eyebrow">READ IN YOUR NATURAL VOICE</span><p id="voice-script">Hello, and welcome. Today we are bringing our teams together across Europe. Every voice deserves to be heard, in every language. Together, we will build new bridges between our countries, our communities, and our ideas.</p><small>Record 5–20 seconds in a quiet room. You can use your own sentence. Maximum 30 seconds.</small></div>
+        <label>Audio source<select id="voice-source"><option value="microphone">Microphone · own voice</option><option value="tab">Teams / browser tab audio</option><option value="loopback">Audio input · desktop Teams / loopback</option></select></label>
+        <div id="voice-input-controls" hidden><label>Audio input<select id="voice-input"><option value="">Select an audio input</option></select></label><button id="refresh-voice-inputs" class="secondary" type="button">Refresh audio inputs</button></div>
+        <div class="record-actions"><button id="record-voice" class="secondary">Record sample</button><strong id="voice-timer">00:00</strong><meter id="voice-level" min="0" max="1" value="0" aria-label="Voice sample input level"></meter></div>
+        <p id="voice-capture-status" class="voice-save-status" role="status" aria-live="polite">Ready to record. Check the input level while the speaker talks, then listen to the sample before saving.</p>
+        <audio id="voice-preview" controls hidden></audio>
+        <button id="save-voice" class="primary" disabled>Save cloned voice</button>
+        <p id="voice-save-status" class="voice-save-status" role="status" aria-live="polite" hidden></p>
+      </article>
+        <section class="panel voice-test" aria-labelledby="voice-test-heading">
+          <h2 id="voice-test-heading">Try your cloned voice</h2>
+          <p class="muted">Save your voice above, then hear it read this English sample. Any saved profile can be tested here; its live translation language assignment stays unchanged.</p>
+          <label>Voice to test<select id="voice-test-select" disabled aria-describedby="voice-test-status"><option value="">Save a voice first</option></select></label>
+          <div class="recording-script"><span class="eyebrow">ENGLISH SAMPLE · FICTIONAL TEXT</span><p id="voice-test-text"></p></div>
+          <button id="test-voice" class="secondary" disabled>Read in English</button>
+          <div class="record-actions"><button id="stop-voice-test" class="secondary" hidden>Stop preview</button><label>Preview volume<input id="voice-test-volume" type="range" min="0" max="100" value="100" aria-label="Voice preview volume" disabled></label></div>
+          <p id="voice-test-status" class="voice-save-status" role="status" aria-live="polite">Save a cloned voice to enable the English preview.</p>
+          <audio id="voice-test-audio" controls preload="none" hidden aria-label="AI-generated English voice preview"></audio>
+        </section>
+      </div><section class="panel voice-library" aria-labelledby="voice-library-heading"><div class="voice-library-heading"><h2 id="voice-library-heading">Your voice library</h2><button id="clear-voices" class="secondary" disabled>Clear voice library</button></div><p id="voice-library-status" class="voice-save-status" role="status" aria-live="polite" hidden></p><div id="voice-list"></div></section></div>
+    </section>
+    <section id="intelligence-page" class="page" hidden>
+      <div class="page-heading"><div><div class="eyebrow">SAVED CONVERSATIONS</div><h1>Record Intelligence</h1><p>Review summaries, figures, and actions grounded in your original transcript.</p></div></div>
+      <div class="intelligence-toolbar"><p id="intelligence-list-status" class="voice-save-status" role="status" aria-live="polite">Open this page to load saved sessions.</p><button id="intelligence-delete" class="secondary" type="button" disabled>Delete all records</button></div>
+      <p id="intelligence-delete-status" class="voice-save-status" role="status" aria-live="polite" hidden></p>
+      <div class="panel intelligence-table-wrap"><table class="intelligence-table"><caption class="muted">Every saved session · Analysis starts automatically after Stop and final source text is saved.</caption><thead><tr><th scope="col">Date</th><th scope="col">Title / session</th><th scope="col">Source language</th><th scope="col">KPIs</th><th scope="col">Analysis status</th></tr></thead><tbody id="intelligence-list"></tbody></table></div>
+    </section>
+    <dialog id="intelligence-dialog" aria-labelledby="intelligence-title">
+      <div class="card-heading"><h2 id="intelligence-title">Record Intelligence</h2><button id="intelligence-close" class="secondary" type="button">Close</button></div>
+      <p id="intelligence-detail-status" class="voice-save-status" role="status" aria-live="polite"></p>
+      <div class="intelligence-actions"><button id="intelligence-analyse" class="primary" type="button" hidden>Analyse</button><a id="intelligence-export">Export session JSON</a></div>
+      <div id="intelligence-report"></div>
+      <p class="muted">AI-generated analysis may contain errors. Check the quoted source evidence against the original recording.</p>
+    </dialog>
+  </main>
+</body>
+</html>

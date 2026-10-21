@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="72" viewBox="0 0 108 72" role="img" aria-labelledby="title">
+  <title id="title">European flag emblem</title>
+  <rect width="108" height="72" fill="#003399"/>
+  <defs>
+    <polygon id="star" points="0.000,-4.000 0.898,-1.236 3.804,-1.236 1.453,0.472 2.351,3.236 0.000,1.528 -2.351,3.236 -1.453,0.472 -3.804,-1.236 -0.898,-1.236"/>
+  </defs>
+  <g fill="#ffcc00">
+    <use href="#star" x="54.000" y="12.000"/>
+    <use href="#star" x="66.000" y="15.215"/>
+    <use href="#star" x="74.785" y="24.000"/>
+    <use href="#star" x="78.000" y="36.000"/>
+    <use href="#star" x="74.785" y="48.000"/>
+    <use href="#star" x="66.000" y="56.785"/>
+    <use href="#star" x="54.000" y="60.000"/>
+    <use href="#star" x="42.000" y="56.785"/>
+    <use href="#star" x="33.215" y="48.000"/>
+    <use href="#star" x="30.000" y="36.000"/>
+    <use href="#star" x="33.215" y="24.000"/>
+    <use href="#star" x="42.000" y="15.215"/>
+  </g>
+</svg>

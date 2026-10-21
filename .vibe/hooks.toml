@@ -1,0 +1,9 @@
+# Vibe post_agent hook: runs `make check` after each turn and feeds failures back.
+# Disable: delete this file or comment out the hook.
+
+[[hooks]]
+name = "make-check"
+type = "post_agent"
+description = "Run `make check` after each agent turn; deny and feed failures back if it fails."
+timeout = 180
+command = "python3 .vibe/check_hooks.py"
