@@ -41,28 +41,92 @@ async def generate_speech(params: SpeechInput) -> dict:
     return {"audio_path": params.output_path}
 
 
+# Voxtral 3 preset voices use voice_<number> slugs; Voxtral 2 presets use
+# named aliases. Both families are accepted by the speech endpoint.
+VOXTRAL3_VOICE_SLUGS = {
+    "voice_479": "ar",  # Maryam
+    "voice_3143": "ca",  # Jordi
+    "voice_481": "de",  # Heidi
+    "voice_1788": "en",  # David
+    "voice_591": "en",  # Fred
+    "voice_590": "en",  # Harriet
+    "voice_3147": "en",  # Howard
+    "voice_3149": "en",  # Hugo
+    "voice_1787": "en",  # Mary
+    "voice_1786": "en",  # Sky
+    "voice_3150": "en",  # James
+    "voice_447": "en",  # Margaret
+    "voice_485": "en",  # Rob
+    "voice_478": "en",  # Sheila
+    "voice_483": "es",  # Elena
+    "voice_3141": "fr",  # Camille
+    "voice_589": "fr",  # Lea
+    "voice_3137": "fr",  # Manon
+    "voice_592": "fr",  # Marie
+    "voice_3139": "hi",  # Ananya
+    "voice_3153": "hi",  # Himanshu
+    "voice_3146": "hu",  # Olivia
+    "voice_482": "it",  # Lorenzo
+    "voice_3133": "ja",  # Haruto
+    "voice_3135": "ko",  # Jin
+    "voice_3136": "ko",  # Sung
+    "voice_3145": "nl",  # Lotte
+    "voice_3134": "no",  # Lars
+    "voice_3154": "pl",  # Leon
+    "voice_480": "pt",  # Gabriela
+    "voice_3155": "ro",  # Irina
+    "voice_3132": "ru",  # Tatiana
+    "voice_3138": "tr",  # Oran
+    "voice_3140": "uk",  # Taras
+    "voice_3144": "vi",  # Huong
+    "voice_3142": "zh",  # Mei
+}
+
+
+def _voice_language(voice) -> str | None:
+    """Return the primary language code for a preset voice, or None."""
+    slug = getattr(voice, "slug", None)
+    if isinstance(slug, str):
+        if slug in VOXTRAL3_VOICE_SLUGS:
+            return VOXTRAL3_VOICE_SLUGS[slug]
+        if slug.startswith(("gb_jane_", "gb_oliver_")):
+            return "en"
+        if slug.startswith("en_paul_"):
+            return "en"
+        if slug.startswith("fr_marie_"):
+            return "fr"
+    codes = getattr(voice, "languages", None) or []
+    for code in codes:
+        if isinstance(code, str):
+            return code.lower().replace("-", "_").split("_")[0]
+    return None
+
+
 def select_default_voice(presets, language: str) -> str:
-    # The catalogue mixes named v1 aliases with voice_<number> presets
-    # that are not accepted by the speech v1 endpoint.
-    # Use the named v1 alias families, rather than accepting a language match alone.
+    # The catalogue mixes Voxtral 3 voice_<number> presets with Voxtral 2
+    # named aliases. Both are accepted by the speech endpoint.
     compatible = [
         voice
         for voice in presets
-        if isinstance(voice.slug, str)
-        and voice.slug.startswith(("gb_jane_", "gb_oliver_", "en_paul_", "fr_marie_"))
+        if isinstance(getattr(voice, "slug", None), str)
+        and (
+            voice.slug in VOXTRAL3_VOICE_SLUGS
+            or voice.slug.startswith(
+                ("gb_jane_", "gb_oliver_", "en_paul_", "fr_marie_")
+            )
+        )
     ]
     if not compatible:
         raise RuntimeError(
-            "No compatible preset voice available. Set DEFAULT_VOICE_ID to a speech v1 preset alias or select a cloned voice."
+            "No compatible preset voice available. Set DEFAULT_VOICE_ID to a speech preset alias or select a cloned voice."
         )
 
     def rank(voice):
-        codes = {
-            code.lower().replace("-", "_").split("_")[0]
-            for code in (voice.languages or [])
-        }
+        voice_language = _voice_language(voice)
+        is_voxtral3 = voice.slug in VOXTRAL3_VOICE_SLUGS
         return (
-            language not in codes,
+            voice_language != language,
+            not is_voxtral3,
             not voice.slug.endswith("_neutral"),
             voice.slug != "gb_jane_neutral",
             voice.slug,

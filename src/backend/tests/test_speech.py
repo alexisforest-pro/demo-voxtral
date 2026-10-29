@@ -1,4 +1,4 @@
-"""Default playback uses speech-v1 aliases, not incompatible catalogue UUIDs."""
+"""Default playback selects a compatible preset voice for the target language."""
 
 import base64
 import json
@@ -18,8 +18,10 @@ from workers.activities import speech
 @pytest.mark.parametrize(
     "language, explicit, expected",
     [
-        ("fr", None, "fr_marie_neutral"),
-        ("it", None, "gb_jane_neutral"),
+        ("fr", None, "voice_592"),  # Marie, fr (Voxtral 3)
+        ("it", None, "voice_482"),  # Lorenzo, it (Voxtral 3)
+        ("de", None, "voice_481"),  # Heidi, de (Voxtral 3)
+        ("es", None, "voice_483"),  # Elena, es (Voxtral 3)
         ("it", "custom-clone", "custom-clone"),
         ("it", "configured-preset", "configured-preset"),
     ],
@@ -74,9 +76,11 @@ def test_recorded_playback_calls_worker_with_compatible_voice(
     def transport(request):
         calls.append(request)
         if request.url.path == "/v1/audio/voices":
-            # New single-language presets sort first and are rejected by speech v1.
             items = [
-                voice("New voice", "voice_482", [language]),
+                voice("Lorenzo", "voice_482", ["it"]),
+                voice("Heidi", "voice_481", ["de"]),
+                voice("Elena", "voice_483", ["es"]),
+                voice("Marie", "voice_592", ["fr"]),
                 voice("Jane", "gb_jane_neutral", ["en_gb"]),
                 voice("Marie sad", "fr_marie_sad", ["fr_fr"]),
                 voice("Marie neutral", "fr_marie_neutral", ["fr-FR"]),
@@ -93,14 +97,6 @@ def test_recorded_playback_calls_worker_with_compatible_voice(
             )
         assert request.url.path == "/v1/audio/speech"
         payload = json.loads(request.content)
-        if payload["voice_id"] == "uuid-voice_482":
-            return httpx.Response(
-                400,
-                json={
-                    "message": "voice is not supported for speech v1",
-                    "code": "3051",
-                },
-            )
         assert payload["voice_id"] == expected
         assert payload["response_format"] == "mp3"
         return httpx.Response(
@@ -145,7 +141,7 @@ def test_no_compatible_preset_fails_before_speech_request():
     with pytest.raises(RuntimeError, match="No compatible preset"):
         speech.select_default_voice(
             [
-                SimpleNamespace(id="uuid", slug="voice_482", languages=["it"]),
+                SimpleNamespace(id="uuid", slug="unknown_preset", languages=["it"]),
             ],
             "it",
         )

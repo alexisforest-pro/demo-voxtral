@@ -131,13 +131,13 @@ def test_frontend_and_config(environment):
     config = client.get("/api/config").json()
     assert [preset["chunk_seconds"] for preset in config["latency_presets"]] == [
         0.2,
-        1,
-        2,
+        0.2,
+        0.2,
     ]
     assert [preset["target_delay_ms"] for preset in config["latency_presets"]] == [
-        240,
-        960,
-        1920,
+        200,
+        500,
+        1000,
     ]
     assert [item["code"] for item in config["languages"]] == ["de", "fr", "es", "it"]
     assert "api_key" not in config

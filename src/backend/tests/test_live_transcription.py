@@ -74,7 +74,7 @@ class Socket:
                     "request_id": "offline",
                     "model": "offline",
                     "audio_format": {"encoding": "pcm_s16le", "sample_rate": 16000},
-                    "target_streaming_delay_ms": 240,
+                    "target_streaming_delay_ms": 200,
                 },
             }
         )
@@ -177,7 +177,7 @@ def harness(tmp_path, monkeypatch):
             LiveTranscriptionInput(
                 input_dir=directory,
                 transcription_model="offline",
-                target_delay_ms=240,
+                target_delay_ms=200,
                 max_seconds=max_seconds,
             )
         )
@@ -242,7 +242,7 @@ def test_ordered_audio_silence_stop_and_final_once(harness):
     ]
     assert harness.socket.closed
     assert harness.heartbeat
-    assert harness.connect.await_args.kwargs["target_streaming_delay_ms"] == 240
+    assert harness.connect.await_args.kwargs["target_streaming_delay_ms"] == 200
 
 
 def test_no_pcm_or_end_before_session_updated(harness):

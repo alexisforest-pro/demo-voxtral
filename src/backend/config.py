@@ -21,22 +21,22 @@ LATENCY_PRESETS = [
         "id": "fast",
         "label": "Responsive",
         "chunk_seconds": 0.2,
-        "target_delay_ms": 240,
-        "description": "200 ms audio updates with a low-lookahead realtime stream.",
+        "target_delay_ms": 200,
+        "description": "200 ms lookahead; fastest text, lowest accuracy.",
     },
     {
         "id": "balanced",
         "label": "Balanced",
-        "chunk_seconds": 1,
-        "target_delay_ms": 960,
-        "description": "1 second audio updates with more model lookahead.",
+        "chunk_seconds": 0.2,
+        "target_delay_ms": 500,
+        "description": "500 ms lookahead; moderate accuracy and delay.",
     },
     {
         "id": "accurate",
         "label": "More context",
-        "chunk_seconds": 2,
-        "target_delay_ms": 1920,
-        "description": "2 second audio updates; more context, not guaranteed accuracy.",
+        "chunk_seconds": 0.2,
+        "target_delay_ms": 1000,
+        "description": "1 s lookahead; more context, not guaranteed accuracy.",
     },
 ]
 
@@ -57,7 +57,7 @@ class Settings:
     )
     transcription_model: str = field(
         default_factory=lambda: os.getenv(
-            "TRANSCRIPTION_MODEL", "voxtral-mini-transcribe-realtime-2602"
+            "TRANSCRIPTION_MODEL", "voxtral-mini-transcribe-realtime-3-0"
         )
     )
     translation_model: str = field(
@@ -70,7 +70,7 @@ class Settings:
         )
     )
     speech_model: str = field(
-        default_factory=lambda: os.getenv("SPEECH_MODEL", "voxtral-mini-tts-2603")
+        default_factory=lambda: os.getenv("SPEECH_MODEL", "voxtral-mini-tts-3-0")
     )
     default_voice_id: str = field(
         default_factory=lambda: os.getenv("DEFAULT_VOICE_ID", "")

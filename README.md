@@ -44,7 +44,7 @@ After these updates, **restart both backend and worker, then refresh the browser
 1. Optionally open **Capture a voice**, enter a name/scope, choose an audio source, and obtain the voice owner’s explicit permission outside the app before recording and hosted cloning.
 2. Record 5–20 seconds in a quiet room (API limits: 3–30 seconds), preview the sample, and **Save cloned voice**.
 3. Click **Read in English** to hear the saved voice immediately as audio arrives. Stop or adjust volume while streaming; use native audio controls for replay/seek afterward.
-4. Open **Live Transcript**, choose source language and audio-update preset, then **Start recording**. No clone is needed for text-only capture.
+4. Open **Live Transcript**, choose source language and latency preset, then **Start recording**. No clone is needed for text-only capture.
 5. For live spoken output, select a voice and enable **Live Translation** on one card. Leave it unchecked for text-only recording.
 6. Stop recording. **03 Record Intelligence** analyses the saved source transcript in the background; open a session row for KPIs and details. Wait for translation/speech finishing before **Play** on any language card. Select another card to switch languages; click Stop to cancel. Export the current session JSON before refreshing.
 
@@ -149,9 +149,9 @@ Key choices:
 
 | Preset | Upload interval | Requested transcription lookahead |
 |---|---:|---:|
-| Responsive | 200 ms | 240 ms |
-| Balanced (default) | 1 s | 960 ms |
-| More context | 2 s | 1,920 ms |
+| Responsive | 200 ms | 200 ms |
+| Balanced (default) | 200 ms | 500 ms |
+| More context | 200 ms | 1,000 ms |
 
 A single microphone chunk may not exceed **3 seconds**. These values are not end-to-end guarantees: workflow dispatch, model processing, and network transport add latency. Source deltas render immediately; a three-second whitespace-aware batching timer commits phrases for translation. Silence is retained for continuous context.
 
@@ -167,13 +167,13 @@ Project-root `.env` overrides matching process environment values. Without a mou
 | `SERVER_URL` | `https://api.mistral.ai` |
 | `DEPLOYMENT_NAME` | `voxbridge-local`; identical for backend/worker. |
 | `DATA_DIR` | Project-root `data/`; shared by backend/worker. |
-| `TRANSCRIPTION_MODEL` | `voxtral-mini-transcribe-realtime-2602` |
+| `TRANSCRIPTION_MODEL` | `voxtral-mini-transcribe-realtime-3-0` |
 | `TRANSLATION_MODEL` | `mistral-medium-latest` |
 | `INTELLIGENCE_MODEL` | Defaults to `TRANSLATION_MODEL`; used for transcript KPI extraction. |
-| `SPEECH_MODEL` | `voxtral-mini-tts-2603` |
+| `SPEECH_MODEL` | `voxtral-mini-tts-3-0` |
 | `DEFAULT_VOICE_ID` | Optional explicit voice ID/alias; otherwise select a compatible neutral speech-v1 preset. |
 
-Automatic default selection uses named `gb_jane_*`, `gb_oliver_*`, `en_paul_*`, and `fr_marie_*` aliases, excludes unsupported `voice_<number>` presets, and normalizes regional language codes. If no language match exists, it uses a compatible cross-language fallback. Explicit cloned/configured voices are unchanged.
+Automatic default selection accepts both Voxtral 3 `voice_<number>` presets and Voxtral 2 named aliases (`gb_jane_*`, `gb_oliver_*`, `en_paul_*`, `fr_marie_*`), matches by the voice's language, and normalizes regional language codes. If no language match exists, it uses a compatible cross-language fallback. Explicit cloned/configured voices are unchanged.
 
 Use models available to your account. `mistral-medium-latest` can change; pin a supported model for reproducibility. `uv.lock` pins dependencies, not hosted model revisions.
 

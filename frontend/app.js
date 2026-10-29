@@ -78,10 +78,10 @@ function updateVoiceTestSelection() {
   select.value = testVoice?.id || ''; updateVoiceTestControls();
 }
 function timeLabel(seconds) { return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`; }
-function bufferLabel(seconds) { return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds} s`; }
+function delayLabel(ms) { return ms < 1000 ? `${ms} ms` : `${ms / 1000} s`; }
 function updateLatencyStatus() {
   const preset = config?.latency_presets.find(preset => preset.id === $('latency').value);
-  if (preset) $('queue-status').textContent = `${bufferLabel(preset.chunk_seconds)} audio updates + model processing`;
+  if (preset) $('queue-status').textContent = `${delayLabel(preset.target_delay_ms)} lookahead + model processing`;
 }
 function safely(action) { return (...args) => Promise.resolve(action(...args)).catch(error => showError(error.message)); }
 
@@ -775,7 +775,7 @@ try {
   $('voice-test-text').textContent = config.voice_preview_text;
   const currentLatency = $('latency').value;
   $('latency').replaceChildren(...config.latency_presets.map(preset => {
-    const option = node('option', '', `${preset.label || preset.id} · ${bufferLabel(preset.chunk_seconds)} audio updates`);
+    const option = node('option', '', `${preset.label || preset.id} · ${delayLabel(preset.target_delay_ms)} lookahead`);
     option.value = preset.id; return option;
   }));
   $('latency').value = currentLatency;

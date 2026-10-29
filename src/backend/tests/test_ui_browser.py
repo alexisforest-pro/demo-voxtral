@@ -110,9 +110,9 @@ def test_european_theme_and_provider_neutral_copy(browser_page):
             json={
                 "api_key_configured": False,
                 "models": {
-                    "transcription": "voxtral-mini-transcribe-realtime-2602",
+                    "transcription": "voxtral-mini-transcribe-realtime-3-0",
                     "translation": "mistral-medium-latest",
-                    "speech": "voxtral-mini-tts-2603",
+                    "speech": "voxtral-mini-tts-3-0",
                 },
                 "deployment_name": "mistral-private-deployment",
                 "latency_presets": LATENCY_PRESETS,
@@ -711,9 +711,9 @@ def sample_pcm(count):
 def test_config_populates_latency_options_and_status(offline_page):
     page, origin = offline_page
     labels = [
-        "Responsive · 200 ms audio updates",
-        "Balanced · 1 s audio updates",
-        "More context · 2 s audio updates",
+        "Responsive · 200 ms lookahead",
+        "Balanced · 500 ms lookahead",
+        "More context · 1 s lookahead",
     ]
     markup = (PROJECT_ROOT / "frontend/index.html").read_text()
     for label in labels:
@@ -730,12 +730,12 @@ def test_config_populates_latency_options_and_status(offline_page):
     ) == [[preset["id"], label] for preset, label in zip(LATENCY_PRESETS, labels)]
     expect(page.locator("#latency")).to_have_value("balanced")
     expect(page.locator("#queue-status")).to_have_text(
-        "1 s audio updates + model processing"
+        "500 ms lookahead + model processing"
     )
-    for preset, duration in zip(LATENCY_PRESETS, ["200 ms", "1 s", "2 s"]):
+    for preset, duration in zip(LATENCY_PRESETS, ["200 ms", "500 ms", "1 s"]):
         page.select_option("#latency", preset["id"])
         expect(page.locator("#queue-status")).to_have_text(
-            f"{duration} audio updates + model processing"
+            f"{duration} lookahead + model processing"
         )
     expect(page.locator("#notice")).to_be_hidden()
 
