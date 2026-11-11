@@ -1094,7 +1094,7 @@ def test_full_transcript_retains_completed_phrases(browser_page, width):
         AudioRecorder.prototype.start = async function() { this.accepting = true; };
         AudioRecorder.prototype.stop = async function() { this.accepting = false; };
     }""")
-    for language in ["de", "fr", "es", "it"]:
+    for language in ["de", "fr", "es", "nl"]:
         card = page.locator(f"#card-{language}")
         assert card.locator(".model-label").count() == 0
         assert card.locator(".language-options").evaluate(
@@ -1212,7 +1212,7 @@ def test_full_transcript_retains_completed_phrases(browser_page, width):
     assert page.locator("#elapsed").inner_text() == "00:00"
     assert all(
         page.locator(f"#play-{language}").is_disabled()
-        for language in ["de", "fr", "es", "it"]
+        for language in ["de", "fr", "es", "nl"]
     )
     assert not errors
 
@@ -1253,7 +1253,7 @@ def recorded_page(browser_page):
             "final": True,
             "translations": {
                 language: f"{language} phrase {index}."
-                for language in ["de", "fr", "es", "it"]
+                for language in ["de", "fr", "es", "nl"]
             },
         }
         for index in range(14)
@@ -1286,7 +1286,7 @@ def recorded_page(browser_page):
     page.wait_for_function(
         "document.getElementById('session-status').textContent === 'Recording live'"
     )
-    for language in ["de", "fr", "es", "it"]:
+    for language in ["de", "fr", "es", "nl"]:
         page.select_option(f"#voice-{language}", voice["id"])
         sockets[0].send(
             json.dumps(
@@ -1299,7 +1299,7 @@ def recorded_page(browser_page):
                 }
             )
         )
-    page.wait_for_function("document.querySelector('#text-it [data-final=true]')")
+    page.wait_for_function("document.querySelector('#text-nl [data-final=true]')")
     yield page, sockets, voice
     assert not errors
 

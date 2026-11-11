@@ -19,11 +19,11 @@ from workers.activities import speech
     "language, explicit, expected",
     [
         ("fr", None, "voice_592"),  # Marie, fr (Voxtral 3)
-        ("it", None, "voice_482"),  # Lorenzo, it (Voxtral 3)
+        ("nl", None, "voice_3145"),  # Lotte, nl (Voxtral 3)
         ("de", None, "voice_481"),  # Heidi, de (Voxtral 3)
         ("es", None, "voice_483"),  # Elena, es (Voxtral 3)
-        ("it", "custom-clone", "custom-clone"),
-        ("it", "configured-preset", "configured-preset"),
+        ("nl", "custom-clone", "custom-clone"),
+        ("nl", "configured-preset", "configured-preset"),
     ],
 )
 def test_recorded_playback_calls_worker_with_compatible_voice(
@@ -77,7 +77,7 @@ def test_recorded_playback_calls_worker_with_compatible_voice(
         calls.append(request)
         if request.url.path == "/v1/audio/voices":
             items = [
-                voice("Lorenzo", "voice_482", ["it"]),
+                voice("Lotte", "voice_3145", ["nl"]),
                 voice("Heidi", "voice_481", ["de"]),
                 voice("Elena", "voice_483", ["es"]),
                 voice("Marie", "voice_592", ["fr"]),
@@ -143,5 +143,5 @@ def test_no_compatible_preset_fails_before_speech_request():
             [
                 SimpleNamespace(id="uuid", slug="unknown_preset", languages=["it"]),
             ],
-            "it",
+            "nl",
         )

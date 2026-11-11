@@ -8,7 +8,7 @@ const languages = [
   { code: 'de', name: 'German', native: 'Deutsch' },
   { code: 'fr', name: 'French', native: 'Français' },
   { code: 'es', name: 'Spanish', native: 'Español' },
-  { code: 'it', name: 'Italian', native: 'Italiano' },
+  { code: 'nl', name: 'Dutch', native: 'Nederlands' },
 ];
 const scripts = {
   all: 'Hello, and welcome. Today we are bringing our teams together across Europe. Every voice deserves to be heard, in every language. Together, we will build new bridges between our countries, our communities, and our ideas.',
@@ -16,7 +16,7 @@ const scripts = {
   fr: 'Bonjour et bienvenue. Aujourd’hui, nous réunissons nos équipes à travers l’Europe. Chaque voix mérite d’être entendue, dans toutes les langues. Ensemble, nous construirons de nouveaux ponts entre nos pays, nos communautés et nos idées.',
   de: 'Hallo und herzlich willkommen. Heute bringen wir unsere Teams in ganz Europa zusammen. Jede Stimme verdient es, in jeder Sprache gehört zu werden. Gemeinsam bauen wir neue Brücken zwischen unseren Ländern, unseren Gemeinschaften und unseren Ideen.',
   es: 'Hola y bienvenidos. Hoy reunimos a nuestros equipos de toda Europa. Cada voz merece ser escuchada, en todos los idiomas. Juntos construiremos nuevos puentes entre nuestros países, nuestras comunidades y nuestras ideas.',
-  it: 'Ciao e benvenuti. Oggi riuniamo i nostri team in tutta Europa. Ogni voce merita di essere ascoltata, in ogni lingua. Insieme costruiremo nuovi ponti tra i nostri paesi, le nostre comunità e le nostre idee.',
+  nl: 'Hallo en welkom. Vandaag brengen we onze teams in heel Europa samen. Elke stem verdient het om gehoord te worden, in elke taal. Samen bouwen we nieuwe bruggen tussen onze landen, onze gemeenschappen en onze ideeën.',
 };
 let config, voices = [], socket, liveRecorder, voiceRecorder, voiceBlob, previewUrl;
 let liveState = 'idle', speechLanguage = null, muted = false, liveFatalError = null;
