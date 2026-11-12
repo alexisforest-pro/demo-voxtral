@@ -30,7 +30,7 @@ class VoiceInput(BaseModel):
 
 class SpeechInput(BaseModel):
     text: str
-    language: Literal["en", "de", "fr", "es", "it"]
+    language: Literal["en", "de", "fr", "es", "nl"]
     segment_index: int = Field(ge=0)
     output_path: str
     model: str

@@ -13,9 +13,9 @@ LANGUAGES = [
     {"code": "de", "name": "German"},
     {"code": "fr", "name": "French"},
     {"code": "es", "name": "Spanish"},
-    {"code": "it", "name": "Italian"},
+    {"code": "nl", "name": "Dutch"},
 ]
-LANGUAGE_CODES = {"en", "de", "fr", "es", "it"}
+LANGUAGE_CODES = {"en", "de", "fr", "es", "nl"}
 LATENCY_PRESETS = [
     {
         "id": "fast",

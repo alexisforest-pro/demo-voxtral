@@ -74,7 +74,7 @@ class LiveSession:
             await asyncio.sleep(1)
 
     def configure(self, language: str | None, voice_id: str | None):
-        if language not in (None, "de", "fr", "es", "it"):
+        if language not in (None, "de", "fr", "es", "nl"):
             raise ValueError("Choose only one supported spoken language.")
         if voice_id:
             voice = self.store.voice(voice_id)

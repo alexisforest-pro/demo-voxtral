@@ -8,7 +8,7 @@ import pytest
 pytest_plugins = ["backend.tests.test_app"]
 
 
-@pytest.mark.parametrize("language", ["de", "fr", "es", "it"])
+@pytest.mark.parametrize("language", ["de", "fr", "es", "nl"])
 def test_full_playback_recovers_every_phrase_in_order_and_caches(environment, language):
     client, store, gateway = environment
     identifier = client.post("/api/sessions", json={}).json()["id"]

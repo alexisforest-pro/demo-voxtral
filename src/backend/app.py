@@ -39,17 +39,17 @@ VOICE_PREVIEW_TEXT = (
 class SessionInput(BaseModel):
     latency: Literal["fast", "balanced", "accurate"] = "balanced"
     source_language: Literal["auto", "en", "de", "fr", "es", "it"] = "auto"
-    speech_language: Literal["de", "fr", "es", "it"] | None = None
+    speech_language: Literal["de", "fr", "es", "nl"] | None = None
     voice_id: str | None = None
 
 
 class PlaybackInput(BaseModel):
-    language: Literal["de", "fr", "es", "it"]
+    language: Literal["de", "fr", "es", "nl"]
     voice_id: str | None = None
 
 
 class RecordedSpeechInput(BaseModel):
-    language: Literal["de", "fr", "es", "it"]
+    language: Literal["de", "fr", "es", "nl"]
     segment_index: int = Field(ge=0)
     voice_id: str | None = None
 
