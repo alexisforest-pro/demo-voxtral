@@ -4,7 +4,7 @@
 
 ## Features
 
-- **Live Transcript:** full original text plus German, French, Spanish, and Italian translations.
+- **Live Transcript:** full original text plus German, French, Spanish, and Dutch translations.
 - **03 Record Intelligence:** one row per saved session; click for transcript-derived KPIs, announcements, actions, deadlines, and supporting quotes. Missing information displays **N/A**.
 - **Optional live speech:** enable **Live Translation** on one language card at a time.
 - **Recorded playback:** stop recording, then stream the entire saved translation—not just the first phrase.
@@ -99,7 +99,7 @@ Preview text is fixed by the backend; it is not a free-text TTS endpoint. Testin
 
 ## Language coverage
 
-The app currently enables **four translation/spoken-output languages: German, French, Spanish, Italian**. English is also enabled for the cloned-voice preview. Model coverage is broader than the app:
+The app currently enables **four translation/spoken-output languages: German, French, Spanish, Dutch**. English is also enabled for the cloned-voice preview. Model coverage is broader than the app:
 
 | Capability | EU coverage | Languages |
 |---|---|---|

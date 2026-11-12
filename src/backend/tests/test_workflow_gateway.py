@@ -23,7 +23,7 @@ TRANSLATIONS = {
     "de": "Hallo Europa",
     "fr": "Bonjour Europe",
     "es": "Hola Europa",
-    "it": "Ciao Europa",
+    "nl": "Hoi Europa",
 }
 RESULT = {"text": "Hello Europe", "translations": TRANSLATIONS}
 

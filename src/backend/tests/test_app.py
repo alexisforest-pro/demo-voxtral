@@ -80,7 +80,7 @@ class FakeGateway:
             "de": "Hallo Europa",
             "fr": "Bonjour Europe",
             "es": "Hola Europa",
-            "it": "Ciao Europa",
+            "nl": "Hoi Europa",
         }
         for language, text in translations.items():
             yield {
@@ -139,7 +139,7 @@ def test_frontend_and_config(environment):
         500,
         1000,
     ]
-    assert [item["code"] for item in config["languages"]] == ["de", "fr", "es", "it"]
+    assert [item["code"] for item in config["languages"]] == ["de", "fr", "es", "nl"]
     assert "api_key" not in config
 
 

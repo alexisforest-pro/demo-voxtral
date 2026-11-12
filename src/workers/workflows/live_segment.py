@@ -30,7 +30,7 @@ class LiveSegmentWorkflow:
                     params.translation_model,
                     params.source_language,
                 )
-                for language in ("de", "fr", "es", "it")
+                for language in ("de", "fr", "es", "nl")
             ]
         )
         return {

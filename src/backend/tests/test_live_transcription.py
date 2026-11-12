@@ -689,11 +689,11 @@ def test_segment_supplied_text_fans_out_translations(monkeypatch):
         "text": params.text,
         "translations": {
             language: f"{language}: {params.text}"
-            for language in ("de", "fr", "es", "it")
+            for language in ("de", "fr", "es", "nl")
         },
     }
     assert translate.await_count == 4
-    for language in ("de", "fr", "es", "it"):
+    for language in ("de", "fr", "es", "nl"):
         translate.assert_any_await(
             params.text,
             language,
