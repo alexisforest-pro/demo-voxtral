@@ -15,6 +15,11 @@ from backend.workflow_gateway import WorkflowGateway
 
 logger = logging.getLogger(__name__)
 MAX_PENDING = 8
+TRANSLATION_CONTEXT_CHARS = 600
+TRANSLATION_WORKFLOW = "voxbridge-live-translation"
+TRANSLATION_FAILED = (
+    "Translation workflow failed; inspect worker logs and execution in Studio."
+)
 
 
 class LiveSession:
@@ -37,7 +42,6 @@ class LiveSession:
         self.intelligence = intelligence
         self.stop_requested = False
         self.stop_clock = None
-        self.translation_queue = asyncio.Queue(maxsize=MAX_PENDING)
         self.speech_queue = asyncio.Queue(maxsize=MAX_PENDING)
         self.send_lock = asyncio.Lock()
         self.input_available = asyncio.Event()
@@ -46,6 +50,21 @@ class LiveSession:
         self.selection_version = 0
         self.index = 0
         self.previous_text = ""
+        # Completed-sentence translations, and provisional fragments of the open one.
+        self.committed_translations: dict[str, str] = {}
+        self.provisional_translations: dict[str, str] = {}
+        self.contexts: dict[int, str] = {}
+        self.open_fragments: list[dict] = []
+        self.waiting_fragments: list[dict] = []
+        self.fragment_job: int | None = None
+        # One session-long translation workflow consumes job files from this folder.
+        self.translation_dir = f"translation/{self.record['id']}"
+        self.translation_started = False
+        self.translation_stopped = False
+        self.translation_failed = False
+        self.translations_done = asyncio.Event()
+        self.jobs: dict[int, dict] = {}
+        self.speech_order: list[int] = []
         self.input_dir = f"audio/input/{self.record['id']}"
         self.input_stopped = False
         self.committed: set[int] = set()
@@ -68,9 +87,24 @@ class LiveSession:
             },
         )
 
+    def publish_translations(self):
+        self.store.write_json(
+            f"{self.translation_dir}/control.json",
+            {
+                "count": len(self.jobs),
+                "stopped": self.translation_stopped,
+                "updated_at": now_iso(),
+            },
+        )
+
+    def pending_jobs(self) -> int:
+        return sum(not job["done"] for job in self.jobs.values())
+
     async def heartbeat(self):
         while True:
             self.publish_input()
+            if self.translation_started:
+                self.publish_translations()
             await asyncio.sleep(1)
 
     def configure(self, language: str | None, voice_id: str | None):
@@ -137,21 +171,83 @@ class LiveSession:
         if event.get("final"):
             self.committed.add(index)
             segment["final"] = True
-            context = self.previous_text[-2000:]
+            self.contexts[index] = self.previous_text[-2000:]
             self.previous_text = (self.previous_text + " " + text)[-2000:]
-            if self.translation_queue.full():
-                segment["translation_error"] = (
-                    "Translation backlog is full; phrase kept as original text."
-                )
-                await self.send(
-                    {"type": "error", "message": segment["translation_error"]}
-                )
+            if event.get("sentence_end", True) is False:
+                # Provisional: shown live, then replaced by the whole-sentence translation.
+                self.open_fragments.append(segment)
+                self.waiting_fragments.append(segment)
+                self.dispatch_fragment()
             else:
-                self.translation_queue.put_nowait((segment, context))
+                fragments, self.open_fragments = self.open_fragments, []
+                # Fragments still waiting are superseded by the whole sentence below.
+                for item in self.waiting_fragments:
+                    item["translation_skipped"] = True
+                self.waiting_fragments = []
+                self.submit(
+                    segment,
+                    " ".join([*(item["text"] for item in fragments), text]),
+                    self.contexts[
+                        fragments[0]["segment_index"] if fragments else index
+                    ],
+                    fragment=False,
+                    revises=[item["segment_index"] for item in fragments],
+                )
             self.save()
-            await self.send(
-                {"type": "queue", "pending": self.translation_queue.qsize()}
+
+    def dispatch_fragment(self):
+        """Send the next waiting fragment once the previous one has finished.
+
+        Each fragment continues the previous fragment translation, so fragments of
+        the same sentence run one at a time; whole sentences never wait.
+        """
+        if self.fragment_job is not None or not self.waiting_fragments:
+            return
+        segment = self.waiting_fragments.pop(0)
+        index = segment["segment_index"]
+        self.fragment_job = self.submit(
+            segment, segment["text"], self.contexts[index], fragment=True, revises=[]
+        )
+
+    def submit(
+        self, segment: dict, text: str, context: str, *, fragment: bool, revises: list
+    ) -> int | None:
+        if self.translation_failed:
+            segment["translation_error"] = TRANSLATION_FAILED
+            return None
+        if self.pending_jobs() >= MAX_PENDING:
+            segment["translation_error"] = (
+                "Translation backlog is full; phrase kept as original text."
             )
+            asyncio.get_running_loop().create_task(
+                self.send({"type": "error", "message": segment["translation_error"]})
+            )
+            return None
+        job_id = len(self.jobs)
+        self.store.write_json(
+            f"{self.translation_dir}/{job_id:05d}.json",
+            {
+                "job_id": job_id,
+                "segment_index": segment["segment_index"],
+                "text": text,
+                "previous_text": context,
+                "previous_translations": self.translation_context(fragment),
+                "partial_sentence": fragment,
+            },
+        )
+        self.jobs[job_id] = {
+            "segment": segment,
+            "fragment": fragment,
+            "revises": revises,
+            "done": False,
+        }
+        segment["translation_job"] = job_id
+        if not fragment:
+            self.speech_order.append(segment["segment_index"])
+            # The sentence ended: its fragment drafts stop being context.
+            self.provisional_translations = {}
+        self.publish_translations()
+        return job_id
 
     async def process_transcript(self):
         await self.input_available.wait()
@@ -193,80 +289,172 @@ class LiveSession:
             self.record["transcription_error"] = diagnostic
             raise RuntimeError(message) from exc
 
+    def translation_context(self, fragment: bool) -> dict[str, str]:
+        languages = set(self.committed_translations) | set(
+            self.provisional_translations
+        )
+        return {
+            language: " ".join(
+                (
+                    self.committed_translations.get(language, "")
+                    + " "
+                    + (
+                        self.provisional_translations.get(language, "")
+                        if fragment
+                        else ""
+                    )
+                ).split()
+            )[-TRANSLATION_CONTEXT_CHARS:]
+            for language in languages
+        }
+
+    def remember_translations(self, completed: dict, segment: dict, fragment: bool):
+        if fragment and segment not in self.open_fragments:
+            return  # Its sentence already ended; this draft is no longer context.
+        target = (
+            self.provisional_translations if fragment else self.committed_translations
+        )
+        for language, text in completed.items():
+            if isinstance(text, str) and text.strip():
+                target[language] = (target.get(language, "") + " " + text.strip())[
+                    -TRANSLATION_CONTEXT_CHARS:
+                ]
+
     async def process_translations(self):
-        while True:
-            segment, context = await self.translation_queue.get()
-            index = segment["segment_index"]
-            try:
-                params = {
-                    "text": segment["text"],
+        """Run one translation workflow for the whole session and relay its events.
+
+        It starts with the first audio chunk, so workflow start-up and the model
+        warm-up overlap with speech instead of delaying the first phrase.
+        """
+        await self.input_available.wait()
+        if not self.index:
+            self.translations_done.set()
+            return
+        self.translation_started = True
+        self.publish_translations()
+        params = {
+            "jobs_dir": self.translation_dir,
+            "translation_model": self.settings.translation_model,
+            "source_language": self.record.get("source_language", "auto"),
+            "max_seconds": self.settings.live_timeout,
+        }
+        try:
+            async for event in self.gateway.stream(TRANSLATION_WORKFLOW, params):
+                if event["type"] == "execution":
+                    self.record["translation_execution_id"] = event["execution_id"]
+                    await self.send({**event, "stage": "translation"})
+                elif event["type"] == "translation":
+                    await self.relay_partial(event)
+                elif event["type"] == "translation_result":
+                    await self.complete_job(event)
+        except WebSocketDisconnect:
+            raise
+        except Exception:
+            logger.exception("Live translation workflow failed")
+            self.translation_failed = True
+            for job in self.jobs.values():
+                if not job["done"]:
+                    job["done"] = True
+                    job["segment"]["translation_error"] = TRANSLATION_FAILED
+            self.save()
+            await self.send({"type": "error", "message": TRANSLATION_FAILED})
+        finally:
+            self.translations_done.set()
+
+    async def relay_partial(self, event: dict):
+        job = self.jobs.get(event.get("job_id"))
+        if job is None or job["done"] or event.get("final"):
+            return
+        segment = job["segment"]
+        if "merged_into" in segment:
+            return
+        await self.send(
+            {
+                "type": "translation",
+                "language": event["language"],
+                "text": event["text"],
+                "segment_index": segment["segment_index"],
+                "final": False,
+                **({"replaces": job["revises"]} if job["revises"] else {}),
+            }
+        )
+
+    async def complete_job(self, event: dict):
+        job = self.jobs.get(event.get("job_id"))
+        if job is None or job["done"]:
+            return
+        job["done"] = True
+        segment, fragment = job["segment"], job["fragment"]
+        index = segment["segment_index"]
+        completed = event.get("translations")
+        completed = completed if isinstance(completed, dict) else {}
+        revises = [i for i in job["revises"] if i in self.segments]
+        superseded = "merged_into" in segment
+        if not superseded:
+            segment["translations"].update(completed)
+            if event.get("error") or not completed:
+                segment["translation_error"] = TRANSLATION_FAILED
+                await self.send({"type": "error", "message": TRANSLATION_FAILED})
+            else:
+                segment.pop("translation_error", None)
+        self.remember_translations(completed, segment, fragment)
+        for revised in revises:
+            # The whole-sentence translation now covers this fragment.
+            self.segments[revised]["translations"] = {}
+            self.segments[revised]["merged_into"] = index
+            self.segments[revised].pop("translation_error", None)
+        for language, text in ({} if superseded else segment["translations"]).items():
+            await self.send(
+                {
+                    "type": "translation",
+                    "language": language,
+                    "text": text,
                     "segment_index": index,
-                    "source_language": self.record["source_language"],
-                    "previous_text": context,
-                    "translation_model": self.settings.translation_model,
+                    "final": True,
+                    **({"replaces": revises} if revises else {}),
                 }
-                async for event in self.gateway.stream(
-                    "voxbridge-live-segment", params
-                ):
-                    if event["type"] == "execution":
-                        segment["execution_id"] = event["execution_id"]
-                        event.update(stage="translation", segment_index=index)
-                    elif event["type"] == "translation":
-                        segment["translations"][event["language"]] = event["text"]
-                    elif event["type"] == "result":
-                        result = event["result"] or {}
-                        completed = result.get("translations", {})
-                        if not isinstance(completed, dict) or not completed:
-                            raise ValueError(
-                                "Translation workflow returned no completed translations."
-                            )
-                        segment["translations"].update(completed)
-                        for language, text in segment["translations"].items():
-                            await self.send(
-                                {
-                                    "type": "translation",
-                                    "language": language,
-                                    "text": text,
-                                    "segment_index": index,
-                                    "final": True,
-                                }
-                            )
-                        continue
-                    await self.send(event)
-                language = self.speech_language
-                text = segment["translations"].get(language, "")
-                if language and text:
-                    if self.speech_queue.full():
-                        await self.send(
-                            {
-                                "type": "error",
-                                "message": "Speech backlog is full; this phrase will remain text-only.",
-                            }
-                        )
-                    else:
-                        await self.speech_queue.put(
-                            (
-                                index,
-                                language,
-                                text,
-                                self.voice_id,
-                                self.selection_version,
-                            )
-                        )
-            except Exception:
-                logger.exception("Translation workflow failed")
-                segment["translation_error"] = (
-                    "Translation workflow failed; inspect worker logs and execution in Studio."
-                )
+            )
+        if fragment:
+            self.fragment_job = None
+            self.dispatch_fragment()
+        await self.queue_ready_speech()
+        self.save()
+        await self.send({"type": "queue", "pending": self.pending_jobs()})
+
+    async def queue_ready_speech(self):
+        """Speak whole sentences in spoken order even when translations finish early."""
+        while self.speech_order:
+            segment = self.segments[self.speech_order[0]]
+            job = self.jobs.get(segment.get("translation_job"))
+            if job is not None and not job["done"]:
+                return
+            index = self.speech_order.pop(0)
+            language = self.speech_language
+            text = segment["translations"].get(language, "") if language else ""
+            if not text:
+                continue
+            if self.speech_queue.full():
                 await self.send(
-                    {"type": "error", "message": segment["translation_error"]}
+                    {
+                        "type": "error",
+                        "message": "Speech backlog is full; this phrase will remain text-only.",
+                    }
                 )
-            finally:
-                self.save()
-                self.translation_queue.task_done()
-                await self.send(
-                    {"type": "queue", "pending": self.translation_queue.qsize()}
-                )
+                continue
+            await self.speech_queue.put(
+                (index, language, text, self.voice_id, self.selection_version)
+            )
+
+    async def drain_translations(self):
+        """After Stop: flush waiting fragments, end the job feed, await the workflow."""
+        while self.waiting_fragments or self.fragment_job is not None:
+            if self.translations_done.is_set():
+                break
+            await asyncio.sleep(0.05)
+        self.translation_stopped = True
+        if self.translation_started:
+            self.publish_translations()
+        await self.translations_done.wait()
 
     async def process_speech(self):
         while True:
@@ -334,8 +522,9 @@ class LiveSession:
                     "message": "Connected. Continuous audio is processed through workflows.",
                 }
             )
+            # Translation failures are reported per phrase and never end the session.
             done, _ = await asyncio.wait(
-                (receiver, transcript, translations, speech, heartbeat),
+                (receiver, transcript, speech, heartbeat),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in done:
@@ -357,7 +546,7 @@ class LiveSession:
             await self.send({"type": "transcript_saved"})
             stage_started = monotonic()
             await self.finishing("translations")
-            await self.translation_queue.join()
+            await self.drain_translations()
             timings["translations"] = round((monotonic() - stage_started) * 1000)
             stage_started = monotonic()
             await self.finishing("speech")
@@ -387,6 +576,10 @@ class LiveSession:
         finally:
             self.input_stopped = True
             self.publish_input()
+            if self.translation_started:
+                self.translation_stopped = True
+                with contextlib.suppress(OSError):
+                    self.publish_translations()
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)

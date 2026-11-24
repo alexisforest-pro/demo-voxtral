@@ -34,7 +34,10 @@ from workers.models import LiveTranscriptionInput
 POLL_SECONDS = 0.05
 LEASE_SECONDS = 15
 BATCH_SECONDS = 3
+SENTENCE_SETTLE_SECONDS = 0.25
 SESSION_READY_SECONDS = 10
+SENTENCE_END = re.compile(r"[.!?…]+[\"'”’)\]]*(?=\s)")
+ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "prof", "st", "vs", "etc", "approx"}
 
 
 def _sanitize_error(value, api_key: str):
@@ -120,14 +123,41 @@ def _read_control(directory: Path) -> dict:
     return control
 
 
+def _is_sentence_end(text: str, end: int) -> bool:
+    """True when text[:end] closes a sentence rather than an abbreviation."""
+    word = text[:end].split()[-1].rstrip("\"'”’)]")
+    stem = word.rstrip(".!?…")
+    abbreviation = (
+        word.endswith(".")
+        and not word.endswith("...")
+        and bool(
+            stem.lower() in ABBREVIATIONS
+            or re.fullmatch(r"(?:[A-Za-z]\.)*[A-Za-z]", stem)
+        )
+    )
+    return bool(stem) and not abbreviation
+
+
+def _sentence_boundary(text: str) -> int:
+    """Index after the last completed sentence followed by whitespace, or 0."""
+    for match in reversed(list(SENTENCE_END.finditer(text))):
+        if _is_sentence_end(text, match.end()):
+            return match.end() + 1
+    return 0
+
+
 class _TranscriptBatches:
-    """Commit whitespace-delimited text without losing a trailing partial word."""
+    """Commit at sentence ends, or at a whitespace boundary after BATCH_SECONDS.
+
+    Final snapshots carry ``sentence_end``: False marks a mid-sentence fallback cut.
+    """
 
     def __init__(self):
         self.full_text = ""
         self.pending = ""
         self.index = 0
         self.first_text_at: float | None = None
+        self.last_text_at: float | None = None
         self.task: Task | None = None
         self.lock = asyncio.Lock()
 
@@ -141,7 +171,7 @@ class _TranscriptBatches:
         else:
             await self.task.update_state(state)
 
-    async def _commit(self, end: int):
+    async def _commit(self, end: int, sentence_end: bool = True):
         text = self.pending[:end].strip()
         if not text:
             return
@@ -149,7 +179,7 @@ class _TranscriptBatches:
         task, self.task = self.task, None
         assert task is not None and isinstance(task.state, dict)
         # Completed carries the only final snapshot; an update would emit it twice.
-        task.state.update(text=text, final=True)
+        task.state.update(text=text, final=True, sentence_end=sentence_end)
         await task.__aexit__(None, None, None)
         self.pending = self.pending[end:]
         self.index += 1
@@ -159,22 +189,36 @@ class _TranscriptBatches:
         await self._partial()
 
     async def _commit_due(self):
+        if self.first_text_at is None:
+            return
+        now = asyncio.get_running_loop().time()
+        stripped = self.pending.rstrip()
+        boundary = _sentence_boundary(self.pending)
         if (
-            self.first_text_at is not None
-            and asyncio.get_running_loop().time() - self.first_text_at >= BATCH_SECONDS
+            not boundary
+            and stripped
+            and stripped[-1] in ".!?…"
+            and self.last_text_at is not None
+            and now - self.last_text_at >= SENTENCE_SETTLE_SECONDS
+            and _is_sentence_end(stripped, len(stripped))
         ):
-            boundary = max(
-                (i + 1 for i, char in enumerate(self.pending) if char.isspace()),
-                default=0,
-            )
+            boundary = len(self.pending)
+        if boundary:
             await self._commit(boundary)
+        elif now - self.first_text_at >= BATCH_SECONDS:
+            # Mid-sentence cut: prefer a clause boundary; the backend revises the
+            # fragment once the sentence ends.
+            spaces = [i + 1 for i, char in enumerate(self.pending) if char.isspace()]
+            clauses = [i for i in spaces if self.pending[:i].rstrip()[-1:] in ",;:"]
+            await self._commit(max(clauses or spaces, default=0), sentence_end=False)
 
     async def append(self, text: str):
         async with self.lock:
             self.full_text += text
             self.pending += text
+            self.last_text_at = asyncio.get_running_loop().time()
             if self.first_text_at is None and self.pending.strip():
-                self.first_text_at = asyncio.get_running_loop().time()
+                self.first_text_at = self.last_text_at
             await self._partial()
             await self._commit_due()
 

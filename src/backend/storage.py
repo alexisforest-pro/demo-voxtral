@@ -66,6 +66,11 @@ class FileStore:
                 self.path(str(snapshot.relative_to(self.root))).unlink(missing_ok=True)
             directory.rmdir()
         self.path(f"intelligence/{identifier}.json").unlink(missing_ok=True)
+        jobs = self.path(f"translation/{identifier}")
+        if jobs.is_dir():
+            for job in jobs.glob("*.json"):
+                job.unlink(missing_ok=True)
+            jobs.rmdir()
         # Remove the session last so a filesystem failure leaves a retryable row.
         self.path(f"sessions/{identifier}.json").unlink(missing_ok=True)
 

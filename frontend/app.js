@@ -416,6 +416,12 @@ function renderText(event) {
   if (!Number.isInteger(segmentIndex) || segmentIndex < 0 || typeof event.text !== 'string' || !event.text.trim()) return;
   const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 45;
   container.querySelector('.placeholder')?.remove();
+  // A whole-sentence translation replaces its provisional fragment translations.
+  if (event.type === 'translation' && Array.isArray(event.replaces)) {
+    for (const replaced of event.replaces) {
+      if (Number.isInteger(replaced) && replaced !== segmentIndex) container.querySelector(`[data-segment="${replaced}"]`)?.remove();
+    }
+  }
   let paragraph = container.querySelector(`[data-segment="${segmentIndex}"]`);
   if (paragraph?.dataset.final === 'true' && !event.final) return;
   if (!paragraph) {

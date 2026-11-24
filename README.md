@@ -120,19 +120,123 @@ Sources: [TTS languages](https://docs.mistral.ai/studio/audio/text_to_speech), [
 
 **All model inference and remote voice operations run in workflow activities.** The backend never calls transcription/chat/TTS/voice endpoints directly.
 
-```text
-Microphone → local WAV chunks → continuous transcription workflow → source text
-Committed phrases → four parallel translation activities → DE / FR / ES / IT
-Optional live speech → speech workflow → MP3 queue
-Full recorded translation / English preview → speech workflow → PCM stream + WAV cache
-Voice sample / deletion → voice workflow → remote voice + local profile
-Stop → final saved source transcript → intelligence workflow → persisted KPI report
+### System overview
+
+The browser talks only to the local backend. The backend starts workflows and reads their events through hosted Mistral Workflows; the worker runs every activity and calls the models. Backend and worker exchange audio and phrase text through the shared `data/` folder, never through workflow payloads.
+
+```mermaid
+flowchart LR
+  subgraph laptop["Laptop · 127.0.0.1 only"]
+    direction LR
+    subgraph browser["Browser · frontend/"]
+      mic["audio-recorder.js<br/>mic → 16 kHz WAV chunks"]
+      ui["app.js<br/>source + DE / FR / ES / IT columns"]
+      player["speech-player.js<br/>Web Audio playback"]
+    end
+    subgraph backend["FastAPI · src/backend/"]
+      live["LiveSession<br/>segments · translation jobs<br/>ordered speech queue"]
+      other["Recorded playback · preview<br/>voices · RecordIntelligence"]
+      gw["WorkflowGateway<br/>start runs · relay Task events"]
+    end
+    subgraph data["Shared DATA_DIR · data/"]
+      audio_in["audio/input/{session}/<br/>NNNNN.wav + control.json"]
+      jobs["translation/{session}/<br/>NNNNN.json · NNNNN.result.json<br/>control.json"]
+      records["sessions/ · intelligence/<br/>voices/ · audio/output/"]
+    end
+    subgraph worker["Worker · src/workers/ · make start-worker"]
+      wf_stt["voxbridge-live-transcription"]
+      wf_tr["voxbridge-live-translation"]
+      wf_tts["voxbridge-spoken-translation"]
+      wf_voice["voxbridge-voice-profile"]
+      wf_ki["voxbridge-record-intelligence"]
+    end
+  end
+  subgraph mistral["Mistral · hosted"]
+    orch["Workflows<br/>orchestration + event stream"]
+    stt["Voxtral realtime STT"]
+    llm["Chat model<br/>TRANSLATION_MODEL"]
+    tts["Voxtral TTS + voices"]
+  end
+
+  mic -->|"WebSocket · WAV chunks"| live
+  live -->|"WebSocket · text + audio URLs"| ui
+  ui --> player
+  other -->|"NDJSON PCM / cached WAV"| player
+  live --> gw
+  other --> gw
+  gw <-->|"start runs · SSE events"| orch
+  orch <-->|"poll tasks · Task events"| worker
+  live -->|"write chunks"| audio_in
+  live -->|"write jobs"| jobs
+  live -->|"save"| records
+  audio_in -->|"poll"| wf_stt
+  jobs <-->|"poll jobs · write results"| wf_tr
+  wf_tts -->|"MP3 / PCM / WAV"| records
+  wf_stt <-->|"realtime WebSocket"| stt
+  wf_tr -->|"4 streams per phrase"| llm
+  wf_ki --> llm
+  wf_tts --> tts
+  wf_voice --> tts
 ```
+
+### One live phrase
+
+Both live workflows start once, with the first audio chunk, and stay open until Stop. Task events from activities reach the backend through the hosted Workflows event stream (omitted below for readability).
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant API as FastAPI LiveSession
+  participant D as data/ shared files
+  participant T as Transcription activity
+  participant X as Translation activity
+  participant S as Speech workflow
+  participant M as Mistral models
+
+  B->>API: Start, first WAV chunk (WebSocket)
+  par once per session
+    API->>T: start voxbridge-live-transcription
+  and
+    API->>X: start voxbridge-live-translation + 1-token warm-up
+  end
+  loop every 200 ms while speaking
+    B->>API: WAV chunk
+    API->>D: audio/input/{session}/NNNNN.wav + control.json
+    D->>T: poll new chunks
+    T->>M: PCM over realtime STT socket
+    M-->>T: text deltas
+    T-->>API: transcript Task event (partial)
+    API-->>B: live source text
+  end
+  Note over T: Cut at a sentence end, or a 3 s fallback piece
+  T-->>API: final segment (sentence_end true or false)
+  API->>D: translation/{session}/NNNNN.json + control.json
+  D->>X: poll new job
+  X->>M: 4 streaming chat calls (DE, FR, ES, IT)
+  M-->>X: tokens
+  X-->>API: translation Task events
+  API-->>B: translated text streams in
+  X->>D: NNNNN.result.json
+  X-->>API: translation_result
+  opt whole sentence with Live Translation enabled
+    API->>S: voxbridge-spoken-translation, in spoken order
+    S->>M: TTS
+    S-->>API: MP3 path
+    API-->>B: audio URL, played in order
+  end
+```
+
+Other flows reuse the same pieces:
+
+- **Recorded playback / English preview:** backend → `voxbridge-spoken-translation` → PCM chunks in `data/audio/output/` → NDJSON stream → Web Audio, then a cached WAV.
+- **Voice sample / deletion:** backend → `voxbridge-voice-profile` → remote voice + local profile in `data/voices/`.
+- **Stop:** final transcript saved → `voxbridge-record-intelligence` reads the snapshot in `data/intelligence/` → persisted KPI report. Translation and speech drain in parallel and do not block it.
 
 | Workflow | Job |
 |---|---|
 | `voxbridge-live-transcription` | One persistent realtime transcription connection per session. |
-| `voxbridge-live-segment` | Translate supplied text into four languages; no audio transcription. |
+| `voxbridge-live-translation` | One per session: reads phrase job files and streams four parallel translations per phrase, several phrases at once. |
 | `voxbridge-spoken-translation` | Live MP3 speech or streamed PCM for full playback/previews. |
 | `voxbridge-voice-profile` | Create/delete remote voices. |
 | `voxbridge-record-intelligence` | Extract a structured report from the full saved source transcript. |
@@ -140,7 +244,8 @@ Stop → final saved source transcript → intelligence workflow → persisted K
 Key choices:
 
 - **Persistent STT:** chunks do not reset model context; sending waits for session setup acknowledgment.
-- **Independent bounded queues:** translations and speech cannot block source text. Translation backlog preserves source phrases and reports missing translations.
+- **Session-long translation:** starting a workflow costs about 2.5 s, so one `voxbridge-live-translation` execution starts with the first audio chunk (overlapping start-up and a one-token model warm-up with speech) and stays open until Stop. The backend writes each phrase to `data/translation/<session>/NNNNN.json` and refreshes `control.json` (the same lease used for audio); the activity runs jobs concurrently on one HTTP client and writes `NNNNN.result.json`, which recorded playback uses for recovery. Fragments of one sentence run one at a time (each continues the previous one); fragments still waiting when their sentence ends are skipped; whole sentences never wait. Live speech is queued in spoken order even when a later sentence finishes first.
+- **Independent bounded queues:** translations and speech cannot block source text. At most 8 translation jobs are pending; beyond that, phrases keep their source text and report the missing translation. A translation workflow failure marks phrases as untranslated without stopping transcription.
 - **Shared files:** workflow payloads contain paths, not audio blobs. Backend and worker must share a writable filesystem; an arbitrary remote worker cannot read laptop paths.
 - **Atomic JSON storage:** simple to inspect/export, but intended for one local user, not concurrent multi-user recovery or retention management.
 - **Event relay:** SDK Task snapshots/patches stream incremental text; event reconnection resumes the same execution, not microphone sessions after a restart.
@@ -153,9 +258,9 @@ Key choices:
 | Balanced (default) | 200 ms | 500 ms |
 | More context | 200 ms | 1,000 ms |
 
-A single microphone chunk may not exceed **3 seconds**. These values are not end-to-end guarantees: workflow dispatch, model processing, and network transport add latency. Source deltas render immediately; a three-second whitespace-aware batching timer commits phrases for translation. Silence is retained for continuous context.
+A single microphone chunk may not exceed **3 seconds**. These values are not end-to-end guarantees: workflow dispatch, model processing, and network transport add latency. Source deltas render immediately. A phrase is committed for translation as soon as a sentence ends (`.`, `!`, `?`, `…`, skipping common abbreviations, initials, and decimals) and the next word arrives, or 250 ms after the last delta if the speaker pauses on the punctuation. Long sentences fall back to a three-second cut, preferring the last `,`/`;`/`:` and otherwise the last space. Fallback fragments are **provisional**: each is translated as a continuation of the earlier fragment translations (no repeated words) and shown live but not spoken. When the sentence ends, the whole sentence is translated once more; that version replaces the fragment paragraphs in every language column, is the only one spoken, and is the one used by recorded playback (fragments are saved with `merged_into`). Each translation receives the last 2,000 characters of source text plus the last 600 characters of that language's completed-sentence translations, so terminology stays consistent. Completed sentences are never rewritten. Silence is retained for continuous context.
 
-Normal stop ends microphone capture immediately. **Finishing** waits for final transcription, then the translation queue, then the speech queue—not just a file save. Source phrases are saved incrementally. The interface now identifies each stage and announces **Transcript saved** before translation/speech drain finishes; intelligence runs independently. Session exports and backend logs contain `stop_timings_ms` (remaining transcription, translation, speech, and total wait) to diagnose future 5–10 second waits. These timings start when the backend receives Stop; they do not measure the browser microphone flush. The waits remain to preserve the final text/audio rather than cutting them off. Fatal transcription errors abort final processing. A completed session may still contain translation/TTS failures. Live transcription has a one-hour timeout, heartbeat, and backend lease; disconnected sessions cannot resume. Activities use one attempt to avoid replaying paid/non-resumable inference.
+Normal stop ends microphone capture immediately. **Finishing** waits for final transcription, then the translation workflow to finish pending jobs, then the speech queue—not just a file save. Source phrases are saved incrementally. The interface now identifies each stage and announces **Transcript saved** before translation/speech drain finishes; intelligence runs independently. Session exports and backend logs contain `stop_timings_ms` (remaining transcription, translation, speech, and total wait) to diagnose future 5–10 second waits. These timings start when the backend receives Stop; they do not measure the browser microphone flush. The waits remain to preserve the final text/audio rather than cutting them off. Fatal transcription errors abort final processing. A completed session may still contain translation/TTS failures. Live transcription has a one-hour timeout, heartbeat, and backend lease; disconnected sessions cannot resume. Activities use one attempt to avoid replaying paid/non-resumable inference.
 
 ## Configuration
 
@@ -188,6 +293,7 @@ src/workers/activities/          Transcription, translation, speech and voice I/
 data/voices/                    Profile JSON and recorded samples
 data/sessions/                  Session JSON
 data/intelligence/              Persisted reports, status and full transcript snapshots
+data/translation/<session>/     Translation job/result JSON and control.json
 data/audio/input/<session>/     Microphone WAVs, control.json, error diagnostics
 data/audio/output/              Live MP3s, PCM chunks and cached WAVs
 ```
@@ -200,7 +306,7 @@ Main endpoints:
 - `POST /api/sessions/{id}/playback` → full-translation cached URL or stream URL.
 - `GET .../{key}/stream` → NDJSON audio frames and completion/error.
 - `GET /api/sessions` → automatically titled saved-session rows with analysis status/report.
-- `DELETE /api/sessions` → delete local records/snapshots; return deleted IDs and retained failures/busy records.
+- `DELETE /api/sessions` → delete local records, intelligence snapshots and translation job files; return deleted IDs and retained failures/busy records.
 - `GET /api/sessions/{id}/intelligence` → session metadata and persisted intelligence.
 - `POST /api/sessions/{id}/intelligence` → background analysis/retry for a stopped session; `?reanalyse=true` explicitly regenerates a completed report.
 - `GET /api/sessions/{id}/export` → session JSON (the intelligence report is retrieved separately).
@@ -230,7 +336,7 @@ make check-all     # All tests + code checks
 make format        # Python formatting/autofixes
 ```
 
-**85 core tests; 122 total (37 browser scenarios).** The earlier 168-test suite was reduced by removing overlap; focused intelligence/Stop/title/deletion and Teams voice-capture regressions were added. The latest core run took **2.39 seconds**; the latest full suite took **18.74 seconds** on the development machine. Timings vary. The `.vibe/` hook runs the fast `make check`. All browser scenarios share one module-scoped runtime, with a fresh isolated context per case.
+**101 core tests; 141 total (40 browser scenarios).** The earlier 168-test suite was reduced by removing overlap; focused intelligence/Stop/title/deletion and Teams voice-capture regressions were added. The latest core run took **3.26 seconds**; the latest browser suite took **19.20 seconds** on the development machine. Timings vary. The `.vibe/` hook runs the fast `make check`. All browser scenarios share one module-scoped runtime, with a fresh isolated context per case.
 
 Coverage includes stream setup/errors, full text history, voice capture/deletion, compatible presets, full-translation recovery, multi-block PCM continuation, caching, cancellation, volume, five-workflow sandbox validation, full-source intelligence routing, evidence/schema validation, persisted history/retry, N/A rendering, and extraction independence from Stop draining. Tests mock hosted inference and do not prove translation quality, model access, voice fidelity, or cloud latency. Slow live-TTS independence has no dedicated regression.
 

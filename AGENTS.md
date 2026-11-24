@@ -26,16 +26,16 @@ src/backend/               FastAPI app (single 127.0.0.1 origin), storage, queue
   tests/                   pytest suite (core + Playwright browser tests)
 src/workers/
   worker.py                Registers the 5 workflows and polls (python -m workers.worker)
-  workflows/               5 workflow definitions (live_transcription, live_segment,
+  workflows/               5 workflow definitions (live_transcription, live_translation,
                            spoken_translation, voice_profile, record_intelligence)
   activities/              All remote I/O: transcription, translation, speech, voices, intelligence
   intelligence_schema.py   Pydantic schema for KPI reports
   models.py                Workflow input models
 data/                      Runtime state (gitignored): sessions/, voices/, intelligence/,
-                           audio/input|output. Backend and worker MUST share this directory.
+                           translation/, audio/input|output. Backend and worker MUST share this directory.
 ```
 
-Data flow: `Microphone → WAV chunks → live-transcription workflow → source text → 4 parallel translation activities → optional speech workflow → MP3/PCM → browser`. Stop triggers the record-intelligence workflow on the saved source transcript.
+Data flow: `Microphone → WAV chunks → live-transcription workflow → source text → job files → session-long live-translation workflow (4 languages per phrase, phrases concurrent) → optional speech workflow → MP3/PCM → browser`. Stop triggers the record-intelligence workflow on the saved source transcript.
 
 ## Commands (from project root)
 
@@ -43,9 +43,9 @@ Data flow: `Microphone → WAV chunks → live-transcription workflow → source
 uv sync --locked           # install locked deps (Python 3.12+, uv required)
 make start-worker          # terminal 1: workflow worker
 make start-app             # terminal 2: uvicorn on http://127.0.0.1:8000 (API docs at /docs)
-make test                  # fast offline core tests (85)
-make test-browser          # Playwright browser tests (37 scenarios; needs Chromium)
-make test-all              # all offline tests (122)
+make test                  # fast offline core tests (101)
+make test-browser          # Playwright browser tests (40 scenarios; needs Chromium)
+make test-all              # all offline tests (141)
 make check                 # lint + format-check + mypy(workflows) + semgrep + core tests
 make check-all             # everything incl. browser tests
 make format                # ruff format + autofix

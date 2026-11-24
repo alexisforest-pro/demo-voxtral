@@ -8,14 +8,14 @@ from backend.config import Settings
 
 
 def workflow_classes():
-    from workers.workflows.live_segment import LiveSegmentWorkflow
     from workers.workflows.live_transcription import LiveTranscriptionWorkflow
+    from workers.workflows.live_translation import LiveTranslationWorkflow
     from workers.workflows.record_intelligence import RecordIntelligenceWorkflow
     from workers.workflows.spoken_translation import SpokenTranslationWorkflow
     from workers.workflows.voice_profile import VoiceProfileWorkflow
 
     return [
-        LiveSegmentWorkflow,
+        LiveTranslationWorkflow,
         LiveTranscriptionWorkflow,
         VoiceProfileWorkflow,
         SpokenTranslationWorkflow,

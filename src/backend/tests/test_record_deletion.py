@@ -31,6 +31,8 @@ def test_delete_records_busy_failure_retry_and_preserved_files(tmp_path, monkeyp
             f"intelligence/{identifier}/snapshot.json", {"text": "Climate investment."}
         )
         store.write_bytes(f"audio/input/{identifier}/00000.wav", b"recording")
+        store.write_json(f"translation/{identifier}/00000.json", {"text": "Climate."})
+        store.write_json(f"translation/{identifier}/00000.result.json", {})
         store.write_bytes(
             f"audio/output/recorded-playback/{identifier}/cached.wav", b"speech"
         )
@@ -68,6 +70,8 @@ def test_delete_records_busy_failure_retry_and_preserved_files(tmp_path, monkeyp
         assert not store.path(f"sessions/{identifiers[2]}.json").exists()
         assert not store.path(f"intelligence/{identifiers[2]}").exists()
         assert not store.path(f"intelligence/{identifiers[2]}.json").exists()
+        assert not store.path(f"translation/{identifiers[2]}").exists()
+        assert store.path(f"translation/{identifiers[0]}/00000.json").exists()
         assert (
             client.get(f"/api/sessions/{identifiers[2]}/intelligence").status_code
             == 404

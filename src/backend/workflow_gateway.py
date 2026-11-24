@@ -48,7 +48,7 @@ class WorkflowGateway:
     async def stream(self, name: str, params: dict) -> AsyncIterator[dict]:
         timeout = (
             self.settings.live_timeout + self.settings.workflow_timeout
-            if name == "voxbridge-live-transcription"
+            if name in ("voxbridge-live-transcription", "voxbridge-live-translation")
             else self.settings.workflow_timeout
         )
         async with self.client() as client:
@@ -151,7 +151,7 @@ class TaskStateReducer:
             return None
         attributes = event.get("attributes", {})
         stream = attributes.get("custom_task_type")
-        if stream not in ("transcript", "translation"):
+        if stream not in ("transcript", "translation", "translation_result"):
             return None
         task_id = attributes["custom_task_id"]
         payload = attributes.get("payload", {})

@@ -38,7 +38,7 @@ def sdk_event(sequence, event_type, attributes):
                 "broker_sequence": sequence,
                 "workflow_context": {
                     "namespace": "test",
-                    "workflow_name": "voxbridge-live-segment",
+                    "workflow_name": "voxbridge-live-translation",
                     "workflow_exec_id": EXECUTION_ID,
                 },
                 "data": {
@@ -53,7 +53,7 @@ def sdk_event(sequence, event_type, attributes):
                     "schedule_id": None,
                     "workflow_exec_id": EXECUTION_ID,
                     "workflow_run_id": "test-run",
-                    "workflow_name": "voxbridge-live-segment",
+                    "workflow_name": "voxbridge-live-translation",
                     "attributes": attributes,
                 },
             },
@@ -178,7 +178,9 @@ def sdk_gateway(tmp_path, monkeypatch):
 
 def collect(gateway):
     async def run():
-        return [event async for event in gateway.stream("voxbridge-live-segment", {})]
+        return [
+            event async for event in gateway.stream("voxbridge-live-translation", {})
+        ]
 
     return asyncio.run(run())
 
@@ -286,10 +288,54 @@ def test_real_gateway_streams_to_websocket_and_routes_speech(sdk_gateway):
 
     client.workflows.execute_workflow_and_wait_async.side_effect = speech_result
     recorded = stream_events()
-    client.workflows.events.get_stream_events_async.side_effect = [
-        EventStream([recorded[1], recorded[2], completed_event()]),
-        EventStream(recorded[3:]),
-        EventStream(
+
+    async def start(**kwargs):
+        return SimpleNamespace(execution_id=kwargs["workflow_identifier"])
+
+    class TranslationStream(EventStream):
+        """Emit SDK translation events only once the backend wrote job 0."""
+
+        def __init__(self, directory):
+            super().__init__([])
+            self.directory = directory
+
+        async def __aiter__(self):
+            while not store.path(f"{self.directory}/00000.json").exists():
+                await asyncio.sleep(0.005)
+            for index, (language, text) in enumerate(TRANSLATIONS.items()):
+                yield task_event(
+                    30 + index,
+                    "translation",
+                    language,
+                    {
+                        "text": text,
+                        "language": language,
+                        "segment_index": 0,
+                        "job_id": 0,
+                        "final": False,
+                    },
+                )
+            yield task_event(
+                40,
+                "translation_result",
+                "result-0",
+                {
+                    "job_id": 0,
+                    "segment_index": 0,
+                    "translations": TRANSLATIONS,
+                    "error": False,
+                },
+            )
+            while not store.read_json(f"{self.directory}/control.json")["stopped"]:
+                await asyncio.sleep(0.005)
+            yield completed_event(41)
+
+    def events_for(workflow_exec_id, start_seq):
+        if workflow_exec_id == "voxbridge-live-transcription":
+            return EventStream([recorded[1], recorded[2], completed_event()])
+        if workflow_exec_id == "voxbridge-live-translation":
+            return TranslationStream(f"translation/{identifier}")
+        return EventStream(
             [
                 sdk_event(
                     100,
@@ -303,8 +349,10 @@ def test_real_gateway_streams_to_websocket_and_routes_speech(sdk_gateway):
                     },
                 )
             ]
-        ),
-    ]
+        )
+
+    client.workflows.execute_workflow_async.side_effect = start
+    client.workflows.events.get_stream_events_async.side_effect = events_for
     with TestClient(create_app(gateway.settings, gateway)) as app:
         identifier = app.post("/api/sessions", json={"speech_language": "fr"}).json()[
             "id"

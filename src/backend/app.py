@@ -333,8 +333,13 @@ def create_app(
             remote_id = voice["remote_voice_id"]
         async with recovery_locks.setdefault(identifier, asyncio.Lock()):
             record = get_session(identifier)
+            # Merged fragments are covered by their whole-sentence translation.
             segments = sorted(
-                (item for item in record["segments"] if item.get("final")),
+                (
+                    item
+                    for item in record["segments"]
+                    if item.get("final") and "merged_into" not in item
+                ),
                 key=lambda item: item["segment_index"],
             )
             if not segments:
@@ -345,6 +350,24 @@ def create_app(
                 if translations.get(params.language, "").strip() and not segment.get(
                     "translation_error"
                 ):
+                    continue
+                job_id = segment.get("translation_job")
+                if isinstance(job_id, int):
+                    # Session-long translation writes one result file per job.
+                    try:
+                        result = store.read_json(
+                            f"translation/{identifier}/{job_id:05d}.result.json"
+                        )
+                    except (OSError, ValueError):
+                        result = {}
+                    recovered = result.get("translations", {})
+                    if (
+                        isinstance(recovered, dict)
+                        and recovered.get(params.language, "").strip()
+                    ):
+                        segment.setdefault("translations", {}).update(recovered)
+                        segment.pop("translation_error", None)
+                        changed = True
                     continue
                 execution_id = segment.get("execution_id")
                 if execution_id:

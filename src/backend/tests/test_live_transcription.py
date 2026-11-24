@@ -22,10 +22,10 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 from backend.config import Settings
 from backend.storage import FileStore, now_iso
 from backend.workflow_gateway import TaskStateReducer
-from workers.activities import transcription
-from workers.models import LiveTranscriptionInput, SegmentInput
+from workers.activities import transcription, translation
+from workers.models import LiveTranscriptionInput, LiveTranslationInput
 from workers.worker import workflow_classes
-from workers.workflows import live_segment, live_transcription
+from workers.workflows import live_transcription, live_translation
 
 
 def wav(value=1000, seconds=0.1):
@@ -238,6 +238,7 @@ def test_ordered_audio_silence_stop_and_final_once(harness):
             "text": "Hello Europe",
             "segment_index": 0,
             "final": True,
+            "sentence_end": True,
         }
     ]
     assert harness.socket.closed
@@ -515,6 +516,73 @@ def test_partial_and_independent_timer_preserve_trailing_word(harness, monkeypat
     assert " ".join(s["text"] for s in finals) == "Hello world again"
 
 
+def test_sentence_end_commits_before_batch_timer(harness, monkeypatch):
+    monkeypatch.setattr(transcription, "BATCH_SECONDS", 60)
+    monkeypatch.setattr(transcription, "SENTENCE_SETTLE_SECONDS", 0.05)
+
+    def finals():
+        return [s["text"] for s in harness.states() if s["final"]]
+
+    async def run():
+        task = asyncio.create_task(harness.run())
+        harness.socket.delta("Mr. Smith met Dr. Jones")
+        harness.socket.delta(" at 3.5 percent. Our people")
+        await until(lambda: len(finals()) == 1)
+        assert finals() == ["Mr. Smith met Dr. Jones at 3.5 percent."]
+        harness.socket.delta(" share ties!")
+        await until(lambda: len(finals()) == 2)
+        assert finals()[1] == "Our people share ties!"
+        harness.socket.delta(" And the U.S.")
+        await asyncio.sleep(0.2)
+        assert len(finals()) == 2
+        harness.control(stopped=True)
+        await harness.socket.end.wait()
+        text = "Mr. Smith met Dr. Jones at 3.5 percent. Our people share ties! And the U.S."
+        harness.socket.done(text)
+        assert await task == text
+
+    asyncio.run(run())
+    assert finals()[2] == "And the U.S."
+    assert all(s["sentence_end"] for s in harness.states() if s["final"])
+
+
+def test_fallback_cut_prefers_clause_and_is_marked_partial(harness, monkeypatch):
+    monkeypatch.setattr(transcription, "BATCH_SECONDS", 0.1)
+
+    async def run():
+        task = asyncio.create_task(harness.run())
+        harness.socket.delta("in other words, we will see")
+        await until(lambda: any(s["final"] for s in harness.states()))
+        harness.control(stopped=True)
+        await harness.socket.end.wait()
+        harness.socket.done("in other words, we will see")
+        await task
+
+    asyncio.run(run())
+    finals = [s for s in harness.states() if s["final"]]
+    assert [(s["text"], s["sentence_end"]) for s in finals] == [
+        ("in other words,", False),
+        ("we will see", True),
+    ]
+
+
+@pytest.mark.parametrize(
+    "text, boundary",
+    [
+        ("Done. Next", len("Done. ")),
+        ('He said "stop." Then', len('He said "stop." ')),
+        ("One. Two? Three", len("One. Two? ")),
+        ("Wait... and", len("Wait... ")),
+        ("Ask Mr. Smith", 0),
+        ("The U.K. team", 0),
+        ("Version 3.5 shipped", 0),
+        ("No end yet", 0),
+    ],
+)
+def test_sentence_boundary(text, boundary):
+    assert transcription._sentence_boundary(text) == boundary
+
+
 def test_new_files_are_polled_then_drained_on_stop(harness):
     async def run():
         task = asyncio.create_task(harness.run())
@@ -669,49 +737,198 @@ def test_explicit_cancellation_closes_connection(harness):
     asyncio.run(run())
 
 
-def test_segment_supplied_text_fans_out_translations(monkeypatch):
-    translate = AsyncMock(
-        side_effect=lambda text, language, *args: {
-            "language": language,
-            "text": f"{language}: {text}",
-        }
+@pytest.fixture
+def translation_harness(tmp_path, monkeypatch):
+    """Run the session-long activity offline with a scripted chat stream."""
+    store = FileStore(tmp_path)
+    directory = "translation/offline"
+    requests, warmups = [], []
+    gates: dict[str, asyncio.Event] = {}
+
+    class Stream:
+        def __init__(self, text):
+            self.tokens = [text[:3], text[3:]]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def __aiter__(self):
+            for token in self.tokens:
+                yield SimpleNamespace(
+                    data=SimpleNamespace(
+                        choices=[SimpleNamespace(delta=SimpleNamespace(content=token))]
+                    )
+                )
+
+    async def stream_async(**kwargs):
+        content = kwargs["messages"][1]["content"]
+        segment = content.rsplit("Current segment:\n", 1)[1]
+        language = kwargs["messages"][0]["content"].split(" into ", 1)[1].split(".")[0]
+        requests.append((segment, language, kwargs["messages"]))
+        if segment in gates:
+            await gates[segment].wait()
+        if segment == "boom" and language == "French":
+            raise RuntimeError("private speech must not be logged")
+        return Stream(f"{language}:{segment}")
+
+    async def complete_async(**kwargs):
+        warmups.append(kwargs)
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(
+                stream_async=stream_async, complete_async=complete_async
+            )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(translation, "Mistral", Client)
+    monkeypatch.setattr(translation, "POLL_SECONDS", 0.005)
+    monkeypatch.setattr(
+        translation, "Settings", lambda: Settings(data_dir=tmp_path, api_key="k")
     )
-    monkeypatch.setattr(live_segment, "translate_text", translate)
-    params = SegmentInput(
-        text="Ready text",
-        segment_index=2,
-        source_language="en",
-        previous_text="Earlier context",
-        translation_model="offline",
-    )
-    result = asyncio.run(live_segment.LiveSegmentWorkflow().run(params))["result"]
-    assert result == {
-        "text": params.text,
-        "translations": {
-            language: f"{language}: {params.text}"
-            for language in ("de", "fr", "es", "it")
+    monkeypatch.setattr(translation.workflows, "activity_heartbeat", lambda: None)
+    task_module = inspect.getmodule(translation.Task)
+    emitted = []
+    monkeypatch.setattr(task_module, "should_publish_event", lambda: True)
+    monkeypatch.setattr(
+        task_module,
+        "create_base_event_fields",
+        lambda: {
+            "event_id": "offline",
+            "root_workflow_exec_id": "offline",
+            "workflow_exec_id": "offline",
+            "workflow_run_id": "offline",
+            "workflow_name": "offline",
         },
-    }
-    assert translate.await_count == 4
-    for language in ("de", "fr", "es", "it"):
-        translate.assert_any_await(
-            params.text,
-            language,
-            params.segment_index,
-            params.previous_text,
-            params.translation_model,
-            params.source_language,
+    )
+    monkeypatch.setattr(
+        task_module,
+        "_publish_task_event",
+        lambda event: emitted.append(copy.deepcopy(event.model_dump(mode="json"))),
+    )
+    jobs = []
+
+    def control(stopped=False):
+        store.write_json(
+            f"{directory}/control.json",
+            {"count": len(jobs), "stopped": stopped, "updated_at": now_iso()},
         )
 
+    def add(text, partial=False, segment_index=None):
+        job = {
+            "job_id": len(jobs),
+            "segment_index": len(jobs) if segment_index is None else segment_index,
+            "text": text,
+            "previous_text": "Earlier.",
+            "previous_translations": {"fr": "Avant."},
+            "partial_sentence": partial,
+        }
+        store.write_json(f"{directory}/{len(jobs):05d}.json", job)
+        jobs.append(job)
+        control()
 
-def test_segment_empty_text_skips_translations(monkeypatch):
-    translate = AsyncMock()
-    monkeypatch.setattr(live_segment, "translate_text", translate)
-    params = SegmentInput(text="", segment_index=0, translation_model="offline")
-    assert asyncio.run(live_segment.LiveSegmentWorkflow().run(params)) == {
-        "result": {"text": "", "translations": {}}
+    def events():
+        reducer = TaskStateReducer()
+        return [state for event in emitted if (state := reducer.consume(event))]
+
+    async def run():
+        return await translation.translate_live_jobs.__original_func__(
+            LiveTranslationInput(jobs_dir=directory, translation_model="offline")
+        )
+
+    control()
+    return SimpleNamespace(
+        store=store,
+        directory=directory,
+        add=add,
+        control=control,
+        events=events,
+        run=run,
+        requests=requests,
+        warmups=warmups,
+        gates=gates,
+    )
+
+
+def test_live_translation_runs_jobs_concurrently_and_writes_results(
+    translation_harness,
+):
+    h = translation_harness
+
+    async def run():
+        h.gates["Slow sentence."] = asyncio.Event()
+        task = asyncio.create_task(h.run())
+        h.add("Slow sentence.")
+        h.add("Fast sentence.")
+        # The second job finishes while the first is still blocked: no serialization.
+        await until(lambda: h.store.path(f"{h.directory}/00001.result.json").exists())
+        assert not h.store.path(f"{h.directory}/00000.result.json").exists()
+        h.gates["Slow sentence."].set()
+        h.control(stopped=True)
+        assert await task == {"jobs": 2}
+
+    asyncio.run(run())
+    assert len(h.warmups) == 1 and h.warmups[0]["max_tokens"] == 1
+    first = h.store.read_json(f"{h.directory}/00000.result.json")
+    assert first == {
+        "job_id": 0,
+        "segment_index": 0,
+        "translations": {
+            "de": "German:Slow sentence.",
+            "fr": "French:Slow sentence.",
+            "es": "Spanish:Slow sentence.",
+            "it": "Italian:Slow sentence.",
+        },
+        "error": False,
     }
-    translate.assert_not_awaited()
+    results = [e for e in h.events() if e["type"] == "translation_result"]
+    # Started and completed snapshots both carry the result; the backend dedupes.
+    assert [r["job_id"] for r in results] == [1, 1, 0, 0]
+    assert results[0] == results[1]
+    partial = [e for e in h.events() if e["type"] == "translation" and not e["final"]]
+    assert {e["job_id"] for e in partial} == {0, 1}
+    messages = next(m for s, lang, m in h.requests if lang == "French")
+    assert "Earlier.\n\nEarlier French translation:\nAvant." in messages[1]["content"]
+    assert "complete sentences" in messages[0]["content"]
+
+
+def test_live_translation_fragment_prompt_and_partial_failure(
+    translation_harness, caplog
+):
+    h = translation_harness
+
+    async def run():
+        task = asyncio.create_task(h.run())
+        h.add("we will once again", partial=True)
+        h.add("boom")
+        h.control(stopped=True)
+        await task
+
+    asyncio.run(run())
+    fragment_prompt = next(m for s, _, m in h.requests if s == "we will once again")
+    assert "unfinished piece of a sentence" in fragment_prompt[0]["content"]
+    failed = h.store.read_json(f"{h.directory}/00001.result.json")
+    assert failed["error"] is True
+    assert set(failed["translations"]) == {"de", "es", "it"}
+    assert "private speech" not in caplog.text
+
+
+def test_live_translation_stops_when_producer_heartbeat_expires(translation_harness):
+    h = translation_harness
+    h.store.write_json(
+        f"{h.directory}/control.json",
+        {"count": 0, "stopped": False, "updated_at": "2020-01-01T00:00:00+00:00"},
+    )
+    with pytest.raises(RuntimeError, match="heartbeat expired"):
+        asyncio.run(h.run())
 
 
 def test_live_workflow_and_five_registered_sandbox_classes(monkeypatch):
@@ -724,6 +941,15 @@ def test_live_workflow_and_five_registered_sandbox_classes(monkeypatch):
         "result": {"text": "Full text"}
     }
     activity.assert_awaited_once_with(params)
+    translate = AsyncMock(return_value={"jobs": 3})
+    monkeypatch.setattr(live_translation, "translate_live_jobs", translate)
+    translation_params = LiveTranslationInput(
+        jobs_dir="translation/offline", translation_model="offline"
+    )
+    assert asyncio.run(
+        live_translation.LiveTranslationWorkflow().run(translation_params)
+    ) == {"result": {"jobs": 3}}
+    translate.assert_awaited_once_with(translation_params)
 
     async def validate():
         classes = workflow_classes()
@@ -732,6 +958,8 @@ def test_live_workflow_and_five_registered_sandbox_classes(monkeypatch):
         definitions = [workflow._Definition.must_from_class(cls) for cls in classes]
         for definition in definitions:
             runner.prepare_workflow(definition)
-        assert "voxbridge-live-transcription" in {d.name for d in definitions}
+        assert {"voxbridge-live-transcription", "voxbridge-live-translation"} <= {
+            d.name for d in definitions
+        }
 
     asyncio.run(validate())

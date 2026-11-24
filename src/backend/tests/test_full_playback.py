@@ -73,6 +73,32 @@ def test_missing_full_translation_is_not_silently_skipped(completed_session):
     assert not gateway.calls
 
 
+def test_full_playback_skips_fragments_merged_into_a_sentence(completed_session):
+    client, store, gateway, identifier, record = completed_session
+    record["segments"] = [
+        {
+            "segment_index": 0,
+            "text": "We will",
+            "final": True,
+            "translations": {},
+            "merged_into": 1,
+        },
+        {
+            "segment_index": 1,
+            "text": "see them.",
+            "final": True,
+            "translations": {"fr": "Nous les verrons."},
+        },
+    ]
+    store.write_json(f"sessions/{identifier}.json", record)
+    response = client.post(
+        f"/api/sessions/{identifier}/playback", json={"language": "fr"}
+    )
+    assert response.status_code == 200
+    client.get(response.json()["stream_url"])
+    assert gateway.calls[-1][1]["text"] == "Nous les verrons."
+
+
 def test_full_playback_validates_session_voice_and_text_limits(environment):
     from backend.tests.test_app import add_voice
 

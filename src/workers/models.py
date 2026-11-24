@@ -12,12 +12,22 @@ class LiveTranscriptionInput(BaseModel):
     max_seconds: int = Field(default=3600, gt=0, le=3600)
 
 
-class SegmentInput(BaseModel):
-    text: str
-    segment_index: int = Field(ge=0)
-    source_language: str = "auto"
-    previous_text: str = ""
+class LiveTranslationInput(BaseModel):
+    jobs_dir: str
     translation_model: str
+    source_language: str = "auto"
+    max_seconds: int = Field(default=3600, gt=0, le=3600)
+
+
+class TranslationJob(BaseModel):
+    """One transcript segment, written by the backend to a shared job file."""
+
+    job_id: int = Field(ge=0)
+    segment_index: int = Field(ge=0)
+    text: str = Field(min_length=1)
+    previous_text: str = ""
+    previous_translations: dict[str, str] = Field(default_factory=dict)
+    partial_sentence: bool = False
 
 
 class VoiceInput(BaseModel):

@@ -26,10 +26,19 @@ def wav(seconds=3, rate=16000, channels=1):
     return output.getvalue()
 
 
+TRANSLATIONS = {
+    "de": "Hallo Europa",
+    "fr": "Bonjour Europe",
+    "es": "Hola Europa",
+    "it": "Ciao Europa",
+}
+
+
 class FakeGateway:
     def __init__(self, store):
         self.store = store
         self.calls = []
+        self.jobs = []
         self.fail_delete = False
         self.fail_speech = False
 
@@ -74,26 +83,47 @@ class FakeGateway:
                 await asyncio.sleep(0.01)
             yield {"type": "result", "result": {"text": "Hello Europe"}}
             return
-        index = params["segment_index"]
-        yield {"type": "execution", "execution_id": f"execution-{index}"}
-        translations = {
-            "de": "Hallo Europa",
-            "fr": "Bonjour Europe",
-            "es": "Hola Europa",
-            "it": "Ciao Europa",
-        }
-        for language, text in translations.items():
-            yield {
-                "type": "translation",
-                "language": language,
-                "text": text,
-                "segment_index": index,
-                "final": False,
-            }
-        yield {
-            "type": "result",
-            "result": {"text": "Hello Europe", "translations": translations},
-        }
+        async for event in self.live_translation(params):
+            yield event
+
+    async def translate(self, job):
+        """Translations for one job file; tests override this to vary output."""
+        return dict(TRANSLATIONS)
+
+    async def live_translation(self, params):
+        """Mimic the session-long workflow: poll job files until stopped."""
+        yield {"type": "execution", "execution_id": "translation-execution"}
+        directory = params["jobs_dir"]
+        index = 0
+        while True:
+            control = self.store.read_json(f"{directory}/control.json")
+            if index < control["count"]:
+                job = self.store.read_json(f"{directory}/{index:05d}.json")
+                self.jobs.append(job)
+                translations = await self.translate(job)
+                for language, text in translations.items():
+                    yield {
+                        "type": "translation",
+                        "job_id": index,
+                        "language": language,
+                        "text": text,
+                        "segment_index": job["segment_index"],
+                        "final": False,
+                    }
+                result = {
+                    "job_id": index,
+                    "segment_index": job["segment_index"],
+                    "translations": translations,
+                    "error": False,
+                }
+                self.store.write_json(f"{directory}/{index:05d}.result.json", result)
+                yield {"type": "translation_result", **result}
+                index += 1
+            elif control["stopped"]:
+                yield {"type": "result", "result": {"jobs": index}}
+                return
+            else:
+                await asyncio.sleep(0.005)
 
 
 @pytest.fixture
